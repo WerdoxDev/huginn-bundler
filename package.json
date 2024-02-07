@@ -1,0 +1,20 @@
+{
+  "name": "huginn-bundler",
+  "module": "index.ts",
+  "type": "module",
+  "bin": {
+    "bundler": "./index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@types/yargs": "^17.0.32",
+    "consola": "^3.2.3",
+    "octokit": "^3.1.2",
+    "yargs": "^17.7.2"
+  }
+}
