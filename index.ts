@@ -1,236 +1,224 @@
 #! /usr/bin/env bun
 
-import { $, semver } from "bun";
+import { input, select } from "@inquirer/prompts";
 import consola from "consola";
+import { Octokit } from "octokit";
+import { $, semver, type ShellOutput } from "bun";
 import { colors } from "consola/utils";
 import { mkdir, readdir } from "node:fs/promises";
-import { Octokit } from "octokit";
 import path from "path";
-import yargs from "yargs";
-import { hideBin } from "yargs/helpers";
+import {
+   CARGO_TOML_PATH,
+   DEBUG_BUILDS_PATH,
+   PACKAGE_JSON_PATH,
+   RELEASE_BUILDS_PATH,
+   REPO,
+   TAURI_DEBUG_BUILD_PATH,
+   TAURI_RELEASE_BUILD_PATH,
+   getBuildFiles,
+   getPatchedVersion,
+   getVersions,
+   stringToVersion,
+   versionToString,
+   writeCargoTomlVersion,
+   writePackageJsonVersion,
+} from "./utils";
+import { BuildType, type AppVersion } from "./types";
 
-const debugBuildsPath = "/home/werdox-wsl/Huginn/packages/huginn-bundler/builds/debug/";
-const tauriBuildPath =
-   "/home/werdox-wsl/Huginn/packages/huginn-app/src-tauri/target/x86_64-pc-windows-msvc/debug/bundle/nsis/";
-const cargoTomlPath = "/home/werdox-wsl/Huginn/packages/huginn-app/src-tauri/Cargo.toml";
-const packageJsonPath = "/home/werdox-wsl/Huginn/packages/huginn-app/package.json";
+const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
 
-const gistId = process.env.GIST_ID as string;
+consola.log("");
+const intent = await select({
+   message: "Select an action:",
+   choices: [
+      { name: "Build", value: 0 },
+      { name: "Create Release", value: 1 },
+      { name: "Delete Release", value: 2 },
+   ],
+});
 
-const octokit = new Octokit({ auth: process.env.TOKEN });
+if (intent === 0) {
+   const version = await input({ message: `Enter the desired version ${colors.red("without patch number")}:` });
+   const debugOrRelease = await select({
+      message: "Select a build mode:",
+      choices: [
+         { name: "Release", value: BuildType.RELEASE },
+         { name: "Debug", value: BuildType.DEBUG },
+      ],
+   });
 
-yargs(hideBin(process.argv))
-   .command("list", "Lists all available versions", () => {}, listVersions)
-   .command(
-      "new <versionNumber>",
-      "Builds and bundles the app",
-      (yargs) =>
-         yargs.positional("versionNumber", {
-            description: "The version of the app. Will automatically increase the patch version if provided a 0",
-            type: "string",
-         }),
-      (argv) => buildVersion(argv.versionNumber || "")
-   )
-   .command(
-      "create-release <versionNumber>",
-      "Creates a new github release given the version",
-      (yargs) =>
-         yargs.positional("versionNumber", {
-            description: "The version of which to create a github release",
-            type: "string",
-         }),
-      (argv) => createRelease(argv.versionNumber || "")
-   )
-   .command(
-      "update-gist <versionNumber>",
-      "Updates the private gist file using the version",
-      (yargs) =>
-         yargs.positional("versionNumber", {
-            description: "The version of which to update the gist with",
-            type: "string",
-         }),
-      (argv) => updateGistFile(argv.versionNumber || "")
-   )
-   .parse();
+   await buildVersion(version, debugOrRelease, false);
+} else if (intent === 1) {
+   const debugVersions = await getVersions(BuildType.DEBUG);
+   const releaseVersions = await getVersions(BuildType.RELEASE);
 
-async function listVersions() {
-   consola.start("Reading versions...\n");
-   const folders = await getVersions();
+   const versions = [...releaseVersions, ...debugVersions];
 
-   if (folders.length === 0) {
-      consola.fail("No versions are currently available!");
-      return;
-   }
+   const version = await select({
+      message: "Select the version to publish:",
+      choices: versions.map((v) => ({
+         name: `${versionToString(v.version)} ${getVersionTypeText(v.type)}`,
+         value: v,
+      })),
+   });
 
-   for (let i = 0; i < folders.length; i++) {
-      const folder = folders[i];
-      const versionText = colors.cyan(folder);
-      const isLatestText = i === 0 ? colors.bold(colors.green("Latest")) : "";
+   const description = await input({
+      message: "Enter a description:",
+   });
 
-      consola.info(`Version ${versionText} ${isLatestText}`);
-   }
+   await createGithubRelease(version.type, versionToString(version.version), description);
+   // await logVersions();
+} else if (intent === 2) {
+   const releases = await octokit.rest.repos.listReleases({ repo: REPO, owner: "WerdoxDev" });
+
+   const versions: (AppVersion & { id: number; tag: string })[] = releases.data.map((x) => ({
+      type: x.tag_name.includes("-dev") ? BuildType.DEBUG : BuildType.RELEASE,
+      version: stringToVersion(x.tag_name.slice(1, 6)),
+      id: x.id,
+      tag: x.tag_name,
+   }));
+
+   const release = await select({
+      message: "Select a release to delete:",
+      choices: versions.map((v) => ({ name: `${versionToString(v.version)} ${getVersionTypeText(v.type)}`, value: v })),
+   });
+
+   await octokit.rest.repos.deleteRelease({ owner: "WerdoxDev", repo: REPO, release_id: release.id });
+   await octokit.rest.git.deleteRef({ owner: "WerdoxDev", repo: REPO, ref: `tags/${release.tag}` });
+
+   consola.log("");
+   consola.success(
+      `Successfuly deleted release for version ${colors.cyan(versionToString(release.version))} ${getVersionTypeText(release.type)}`
+   );
 }
 
-async function buildVersion(version: string) {
+async function buildVersion(version: string, type: BuildType, disablePublishing: boolean) {
    try {
-      const newVersion = await getNewVersion(version);
-      const newVersionPath = path.resolve(debugBuildsPath, newVersion);
+      const versions = await getVersions(type);
+      const newVersion = getPatchedVersion(version, versions);
+      const newVersionPath = path.resolve(type === BuildType.DEBUG ? DEBUG_BUILDS_PATH : RELEASE_BUILDS_PATH, newVersion);
 
-      await setCargoVersion(newVersion);
-      await setPackageJsonVersion(newVersion);
+      consola.log("");
+      consola.info(`Started build for version ${colors.cyan(newVersion)} ${getVersionTypeText(type)}`);
+      consola.info(`Updating version fields to ${colors.cyan(newVersion)}`);
+
+      // Update the version numbers in cargo.toml and package.json
+      await writeCargoTomlVersion(CARGO_TOML_PATH, newVersion);
+      await writePackageJsonVersion(PACKAGE_JSON_PATH, newVersion);
+
+      consola.info(`Building Huginn ${colors.cyan(newVersion)}`);
+
+      // Set environment variables for tauri
+      $.env({
+         ...process.env,
+         TAURI_PRIVATE_KEY: process.env.TAURI_PRIVATE_KEY,
+         TAURI_KEY_PASSWORD: process.env.TAURI_KEY_PASSWORD,
+      });
+
+      // Run the build script and log the result
+      let result: ShellOutput;
+
+      if (type === BuildType.DEBUG) result = await $`cd ../huginn-app-react && bun tauri-build --debug`.quiet();
+      else result = await $`cd ../huginn-app-react && bun tauri-build`.quiet();
+
+      // Create a directory for the new version
       await mkdir(newVersionPath);
 
-      await $`cd ../huginn-app && bun tauri-build`;
+      const files = await getBuildFiles(type === BuildType.DEBUG ? TAURI_DEBUG_BUILD_PATH : TAURI_RELEASE_BUILD_PATH, newVersion);
 
-      const files = await getUpdateFiles(tauriBuildPath, newVersion, newVersion, false);
+      // Get blob for both .zip and .sig files
+      const zipFile = Bun.file(files.zipFile.path);
+      const sigFile = Bun.file(files.sigFile.path);
 
-      const zipFile = Bun.file(files.zipFilePath);
-      const sigFile = Bun.file(files.sigFilePath);
+      consola.info(`Copying build files to ${colors.cyan(newVersionPath)}`);
 
-      await Bun.write(path.resolve(newVersionPath, files.zipFileName), zipFile);
-      await Bun.write(path.resolve(newVersionPath, files.sigFileName), sigFile);
+      // Copy .zip and .sig files to our new version's folder
+      await Bun.write(path.resolve(newVersionPath, files.zipFile.name), zipFile);
+      await Bun.write(path.resolve(newVersionPath, files.sigFile.name), sigFile);
 
-      consola.success(`Build complete for version ${colors.cyan(newVersion)}`);
+      consola.success(`Build completed for version ${colors.cyan(newVersion)} ${getVersionTypeText(type)}`);
 
-      await createRelease(newVersion);
+      // if (disablePublishing) {
+      //    return;
+      // }
 
-      consola.success(`Created github release`);
+      // await createGithubRelease(newVersion);
 
-      await updateGistFile(newVersion);
+      // consola.success(`Created github release`);
 
-      consola.success("Updated gist to new version");
+      // await updateGistFile(newVersion);
+
+      // consola.success("Updated gist to new version");
    } catch (e) {
       consola.error("Something went wrong... ");
       throw e;
    }
 }
 
-async function createRelease(version: string) {
+async function createGithubRelease(type: BuildType, version: string, description: string) {
+   consola.log("");
+   consola.info(`Creating release for version ${colors.cyan(version)} ${getVersionTypeText(type)}`);
+
+   // Create the release with a description
    const release = await octokit.rest.repos.createRelease({
       owner: "WerdoxDev",
-      repo: "huginn-app",
-      tag_name: `v${version}-dev`,
-      target_commitish: "dev",
-      body: "A new release in the dev branch",
+      repo: REPO,
+      tag_name: type === BuildType.DEBUG ? `v${version}-dev` : `v${version}`,
+      target_commitish: "master",
+      body: description,
    });
 
-   const files = await getUpdateFiles(debugBuildsPath, version);
+   // Get build files from debug or release folders
+   const files = await getBuildFiles(
+      path.resolve(type === BuildType.DEBUG ? DEBUG_BUILDS_PATH : RELEASE_BUILDS_PATH, version),
+      version
+   );
 
-   const zipFileString = Buffer.from(await Bun.file(files.zipFilePath).arrayBuffer()).toString();
-   const sigFileString = Buffer.from(await Bun.file(files.sigFilePath).arrayBuffer()).toString();
+   consola.info("Uploading files...");
+   // Convert build files to strings
+   const zipFileString = await Bun.file(files.zipFile.path).arrayBuffer();
+   const sigFileString = await Bun.file(files.sigFile.path).text();
 
+   // Upload both .zip and .sig files to the release
    await octokit.rest.repos.uploadReleaseAsset({
-      name: files.zipFileName,
+      name: files.zipFile.name,
       release_id: release.data.id,
       owner: "WerdoxDev",
-      repo: "huginn-app",
-      data: zipFileString,
+      repo: REPO,
+      data: zipFileString as unknown as string,
+      headers: { "content-type": "application/zip" },
    });
 
    await octokit.rest.repos.uploadReleaseAsset({
-      name: files.sigFileName,
+      name: files.sigFile.name,
       release_id: release.data.id,
       owner: "WerdoxDev",
-      repo: "huginn-app",
+      repo: REPO,
       data: sigFileString,
    });
+
+   consola.log("");
+   consola.success(`Created github release for version ${colors.cyan(version)} ${getVersionTypeText(type)}`);
 }
 
-async function updateGistFile(version: string) {
-   const files = await getUpdateFiles(debugBuildsPath, version);
-
-   const sigFileString = await Bun.file(files.sigFilePath).text();
-   const publishDate = new Date(Bun.file(files.zipFilePath).lastModified).toISOString();
-
-   const url = `https://github.com/WerdoxDev/huginn-app/releases/download/v${version}-dev/Huginn_${version}_x64-setup.nsis.zip`;
-
-   const content: UpdateFileInfo = {
-      version: `v${version}`,
-      pub_date: publishDate,
-      notes: `Updated to version ${version}!`,
-      platforms: {
-         "windows-x86_64": { signature: sigFileString, url: url },
-      },
-   };
-
-   await octokit.rest.gists.update({
-      gist_id: gistId,
-      description: `Updated to version ${version}!`,
-      files: { "huginn-version.json": { filename: "huginn-version.json", content: JSON.stringify(content, null, 2) } },
-   });
+function getVersionTypeText(type: BuildType): string {
+   return type === BuildType.DEBUG ? colors.red("debug") : colors.green("release");
 }
 
-async function getUpdateFiles(
-   rootFolder: string,
-   version: string,
-   filter?: string,
-   versionAsDirectory: boolean = true
-) {
-   const files = await readdir(path.resolve(rootFolder, versionAsDirectory ? version : ""));
+// async function logVersions() {
+//    consola.start("Reading versions...\n");
+//    const folders = await getVersions(BuildType.RELEASE);
 
-   const zipFileName = files.find((x) => x.endsWith(".zip") && x.includes(filter || ""))!;
-   const sigFileName = files.find((x) => x.endsWith(".sig") && x.includes(filter || ""))!;
+//    if (folders.length === 0) {
+//       consola.fail("No versions are currently available!");
+//       return;
+//    }
 
-   const zipFilePath = path.resolve(rootFolder, versionAsDirectory ? version : "", zipFileName);
-   const sigFilePath = path.resolve(rootFolder, versionAsDirectory ? version : "", sigFileName);
+//    for (let i = 0; i < folders.length; i++) {
+//       const folder = folders[i];
+//       const versionText = colors.cyan(folder);
+//       const isLatestText = i === 0 ? colors.bold(colors.green("Latest")) : "";
 
-   return { zipFileName, sigFileName, zipFilePath, sigFilePath };
-}
-
-async function getVersions() {
-   const folders = (await readdir(debugBuildsPath)).sort(semver.order).reverse();
-   return folders;
-}
-
-async function getNewVersion(version: string) {
-   const versionInFolder = (await getVersions()).find((x) => x.split(".")[1] === version.split(".")[1]);
-   let versionToModify = versionInFolder || version;
-
-   const split = versionToModify.split(".");
-   const patchNumber = versionInFolder ? (parseInt(split[2]) + 1).toString() : "0";
-
-   return `${split[0]}.${split[1]}.${patchNumber}`;
-}
-
-async function setCargoVersion(version: string) {
-   const cargoToml = Bun.file(cargoTomlPath);
-
-   const text = await cargoToml.text();
-   const modifiedText = text
-      .split("\n")
-      .map((x) => {
-         if (x.startsWith("version = ")) {
-            return `version = "${version}"`;
-         }
-
-         return x;
-      })
-      .join("\n");
-
-   await Bun.write(cargoTomlPath, modifiedText);
-}
-
-async function setPackageJsonVersion(version: string) {
-   const packageJson = Bun.file(packageJsonPath);
-
-   const text = await packageJson.text();
-   const modifiedText = text
-      .split("\n")
-      .map((x) => {
-         if (x.trim().startsWith('"version"')) {
-            return `"version": "${version}",`;
-         }
-
-         return x;
-      })
-      .join("\n");
-
-   await Bun.write(packageJsonPath, modifiedText);
-}
-
-type UpdateFileInfo = {
-   version: string;
-   notes: string;
-   pub_date: string;
-   platforms: { [k: string]: { signature: string; url: string } };
-};
+//       consola.info(`Version ${versionText} ${isLatestText}`);
+//    }
+// }
