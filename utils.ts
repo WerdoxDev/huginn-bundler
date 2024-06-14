@@ -35,7 +35,7 @@ export async function getLastVersion(type: BuildType): Promise<AppVersion | null
  * @returns the given version with an increased patch number so 0.3.0 becomes 0.3.1
  */
 export function getPatchedVersion(version: string, orderedVersions: AppVersion[]): string {
-   const latestVersion = orderedVersions?.[0].version ?? { major: 0, minor: 0, patch: 0 };
+   const latestVersion = orderedVersions?.[0]?.version ?? { major: 0, minor: 0, patch: 0 };
    const versionToPatch = stringToVersion(version);
 
    if (versionToPatch.patch !== undefined) throw new Error("Input version cannot have a patch number");

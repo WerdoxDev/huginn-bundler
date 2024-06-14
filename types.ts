@@ -18,3 +18,10 @@ export type BuildFiles = {
    zipFile: { path: string; name: string };
    sigFile: { path: string; name: string };
 };
+
+export type UpdateFileInfo = {
+   version: string;
+   notes: string;
+   pub_date: string;
+   platforms: { [k: string]: { signature: string; url: string } };
+};

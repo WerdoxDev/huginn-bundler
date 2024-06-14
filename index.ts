@@ -10,6 +10,7 @@ import path from "path";
 import {
    CARGO_TOML_PATH,
    DEBUG_BUILDS_PATH,
+   GIST_ID,
    PACKAGE_JSON_PATH,
    RELEASE_BUILDS_PATH,
    REPO,
@@ -23,7 +24,7 @@ import {
    writeCargoTomlVersion,
    writePackageJsonVersion,
 } from "./utils";
-import { BuildType, type AppVersion } from "./types";
+import { BuildType, type AppVersion, type UpdateFileInfo } from "./types";
 
 const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
 
@@ -67,6 +68,7 @@ if (intent === 0) {
    });
 
    await createGithubRelease(version.type, versionToString(version.version), description);
+   await updateGistFile(version.type, versionToString(version.version), description);
    // await logVersions();
 } else if (intent === 2) {
    const releases = await octokit.rest.repos.listReleases({ repo: REPO, owner: "WerdoxDev" });
@@ -199,6 +201,36 @@ async function createGithubRelease(type: BuildType, version: string, description
 
    consola.log("");
    consola.success(`Created github release for version ${colors.cyan(version)} ${getVersionTypeText(type)}`);
+}
+
+async function updateGistFile(type: BuildType, version: string, description: string) {
+   const files = await getBuildFiles(
+      path.resolve(type === BuildType.DEBUG ? DEBUG_BUILDS_PATH : RELEASE_BUILDS_PATH, version),
+      version
+   );
+
+   const sigFileString = await Bun.file(files.sigFile.path).text();
+   const publishDate = new Date(Bun.file(files.zipFile.path).lastModified).toISOString();
+
+   const url = `https://github.com/WerdoxDev/${REPO}/releases/download/v${version}-dev/Huginn_${version}_x64-setup.nsis.zip`;
+
+   const content: UpdateFileInfo = {
+      version: `${version}`,
+      pub_date: publishDate,
+      notes: description,
+      platforms: {
+         "windows-x86_64": { signature: sigFileString, url: url },
+      },
+   };
+
+   consola.info("Updating gist file...");
+   await octokit.rest.gists.update({
+      gist_id: GIST_ID,
+      description: description,
+      files: { "huginn-version.json": { filename: "huginn-version.json", content: JSON.stringify(content, null, 2) } },
+   });
+
+   consola.success(`Updated gist file for version ${colors.cyan(version)} ${getVersionTypeText(type)}`);
 }
 
 function getVersionTypeText(type: BuildType): string {
