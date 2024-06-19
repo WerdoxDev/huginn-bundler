@@ -3,8 +3,7 @@ import { mkdir, readdir } from "node:fs/promises";
 import path from "path";
 import { BuildType, type BuildFiles, type Version, type AppVersion } from "./types";
 
-export const DEBUG_BUILDS_PATH = process.env.DEBUG_BUILDS_PATH!;
-export const RELEASE_BUILDS_PATH = process.env.RELEASE_BUILDS_PATH!;
+export const BUILDS_PATH = process.env.BUILDS_PATH!;
 
 export const TAURI_DEBUG_BUILD_PATH = process.env.TAURI_DEBUG_BUILD_PATH!;
 export const TAURI_RELEASE_BUILD_PATH = process.env.TAURI_RELEASE_BUILD_PATH!;
@@ -18,17 +17,9 @@ export const REPO = process.env.REPO_NAME!;
 /**
  * @returns all version in either debug or release folders
  */
-export async function getVersions(type: BuildType): Promise<AppVersion[]> {
-   const folders = (await readdir(type === BuildType.DEBUG ? DEBUG_BUILDS_PATH : RELEASE_BUILDS_PATH)).sort(semver.order).reverse();
-   return folders.map((x) => ({ type, version: stringToVersion(x) }));
-}
-
-/**
- * @returns the last version in either debug or release folders
- */
-export async function getLastVersion(type: BuildType): Promise<AppVersion | null> {
-   const versions = await getVersions(type);
-   return versions.length === 0 ? null : versions[0];
+export async function getVersions(): Promise<AppVersion[]> {
+   const folders = (await readdir(BUILDS_PATH)).sort((v1, v2) => semver.order(v1.split("_")[0], v2.split("_")[0])).reverse();
+   return folders.map((x) => ({ type: getFolderBuildType(x), version: stringToVersion(x) }));
 }
 
 /**
@@ -73,11 +64,14 @@ export async function getBuildFiles(buildPath: string, version: string): Promise
  * @returns a Version object that contains major, minor, patch numbers
  */
 export function stringToVersion(version: string): Version {
-   const split = version.split(".");
-   const patch = split?.[2] ?? undefined;
-   if (split.length < 2) throw new Error("Version string was invalid");
+   // 0.0.0_release / 0.0.0_debug
+   const wholeSplit = version.split("_");
+   const versionSplit = wholeSplit[0].split(".");
 
-   return { major: parseInt(split[0]), minor: parseInt(split[1]), patch: patch ? parseInt(patch) : undefined };
+   const patch = versionSplit?.[2] ?? undefined;
+   if (versionSplit.length < 2) throw new Error("Version string was invalid");
+
+   return { major: parseInt(versionSplit[0]), minor: parseInt(versionSplit[1]), patch: patch ? parseInt(patch) : undefined };
 }
 
 /**
@@ -85,6 +79,22 @@ export function stringToVersion(version: string): Version {
  */
 export function versionToString(version: Version): string {
    return `${version.major}.${version.minor}.${version.patch}`;
+}
+
+/**
+ * @returns returns either _debug or _release
+ */
+export function getVersionSuffix(type: BuildType) {
+   return type === BuildType.DEBUG ? "_debug" : "_release";
+}
+
+/**
+ * @returns a folder name's build type indicated by _release or _debug
+ */
+export function getFolderBuildType(folderName: string): BuildType {
+   if (folderName.endsWith("_debug")) return BuildType.DEBUG;
+   else if (folderName.endsWith("_release")) return BuildType.RELEASE;
+   return BuildType.DEBUG;
 }
 
 /**
