@@ -6,13 +6,11 @@
     "bundler": "./index.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5.3.3"
+    "@types/bun": "latest",
+    "typescript": "^5.5.3"
   },
   "dependencies": {
-    "@inquirer/prompts": "^5.0.5",
+    "@inquirer/prompts": "^5.1.0",
     "@types/yargs": "^17.0.32",
     "consola": "^3.2.3",
     "octokit": "^3.2.1",

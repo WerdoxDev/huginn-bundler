@@ -3,16 +3,16 @@ import { mkdir, readdir } from "node:fs/promises";
 import path from "path";
 import { BuildType, type BuildFiles, type Version, type AppVersion } from "./types";
 
-export const BUILDS_PATH = process.env.BUILDS_PATH!;
+export const BUILDS_PATH: string = process.env.BUILDS_PATH!;
 
-export const TAURI_DEBUG_BUILD_PATH = process.env.TAURI_DEBUG_BUILD_PATH!;
-export const TAURI_RELEASE_BUILD_PATH = process.env.TAURI_RELEASE_BUILD_PATH!;
+export const TAURI_DEBUG_BUILD_PATH: string = process.env.TAURI_DEBUG_BUILD_PATH!;
+export const TAURI_RELEASE_BUILD_PATH: string = process.env.TAURI_RELEASE_BUILD_PATH!;
 
-export const CARGO_TOML_PATH = process.env.CARGO_TOML_PATH!;
-export const PACKAGE_JSON_PATH = process.env.PACKAGE_JSON_PATH!;
+export const CARGO_TOML_PATH: string = process.env.CARGO_TOML_PATH!;
+export const PACKAGE_JSON_PATH: string = process.env.PACKAGE_JSON_PATH!;
 
-export const GIST_ID = process.env.GIST_ID!;
-export const REPO = process.env.REPO_NAME!;
+export const GIST_ID: string = process.env.GIST_ID!;
+export const REPO: string = process.env.REPO_NAME!;
 
 /**
  * @returns all version in either debug or release folders
@@ -84,7 +84,7 @@ export function versionToString(version: Version): string {
 /**
  * @returns returns either _debug or _release
  */
-export function getVersionSuffix(type: BuildType) {
+export function getVersionSuffix(type: BuildType): string {
    return type === BuildType.DEBUG ? "_debug" : "_release";
 }
 
@@ -100,7 +100,7 @@ export function getFolderBuildType(folderName: string): BuildType {
 /**
  * Writes the specified version to Cargo.toml file
  */
-export async function writeCargoTomlVersion(path: string, version: string) {
+export async function writeCargoTomlVersion(path: string, version: string): Promise<void> {
    const cargoToml = Bun.file(path);
 
    const text = await cargoToml.text();
@@ -121,7 +121,7 @@ export async function writeCargoTomlVersion(path: string, version: string) {
 /**
  * Writes the specified version to a package.json file
  */
-export async function writePackageJsonVersion(path: string, version: string) {
+export async function writePackageJsonVersion(path: string, version: string): Promise<void> {
    const packageJson = Bun.file(path);
 
    const text = await packageJson.text();

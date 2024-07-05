@@ -5,10 +5,11 @@
       "module": "ESNext",
       "moduleDetection": "force",
       "jsx": "react-jsx",
-      "allowJs": true,
 
       /* Bundler mode */
       "moduleResolution": "bundler",
+      "isolatedDeclarations": true,
+      "declaration": true,
       "allowImportingTsExtensions": true,
       "verbatimModuleSyntax": true,
       "noEmit": true,
