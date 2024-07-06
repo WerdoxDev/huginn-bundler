@@ -1,15 +1,5 @@
-# huginn-bundler
+# Huginn Bundler
 
-To install dependencies:
+This repository contains Huginn's bundler code.
 
-```bash
-bun install
-```
-
-To run:
-
-```bash
-bun run index.ts
-```
-
-This project was created using `bun init` in bun v1.0.25. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+All releases will be made in this repository for the time being!
